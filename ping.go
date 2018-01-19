@@ -6,6 +6,8 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"math"
 	"net"
 	"os"
@@ -38,7 +40,11 @@ func (s Summary) Stat() string {
 	)
 }
 
-func ICMP(ctx context.Context, count int, addr string) (*Summary, error) {
+// ICMP pings addr using IPv4 ICMP echo messages until count packets are sent or
+// ctx is canceled. If w is not null, output similar to ping(8) command is
+// written there. If count is not positive, function runs until ctx is canceled.
+// If addr is not an IPv4 address, it is resolved and first IPv4 record is used.
+func ICMP(ctx context.Context, w io.Writer, count int, addr string) (*Summary, error) {
 	dst := net.ParseIP(addr)
 	if dst == nil {
 		ips, err := net.LookupIP(addr)
@@ -61,13 +67,16 @@ func ICMP(ctx context.Context, count int, addr string) (*Summary, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer c.Close()
 	if deadline, ok := ctx.Deadline(); ok {
 		c.SetDeadline(deadline)
 	}
-	defer c.Close()
+	if w == nil {
+		w = ioutil.Discard
+	}
 
 	rcvBuf := make([]byte, 1500)
-	msgID := os.Getpid() & 0xffff
+	msgID := os.Getpid() & 0xffff // FIXME
 	buf := make([]byte, payloadSize)
 	_ = append(buf[:0], "ping"...)
 	ticker := time.NewTicker(time.Second)
@@ -115,7 +124,7 @@ sendLoop:
 		for {
 			n, remoteAddr, err := c.ReadFrom(rcvBuf)
 			if te, ok := err.(interface{ Timeout() bool }); ok && te.Timeout() {
-				fmt.Println("Request timeout for icmp_seq", seq) // FIXME
+				fmt.Fprintln(w, "Request timeout for icmp_seq", seq) // FIXME
 				summary.Lost++
 				continue sendLoop
 			}
@@ -149,7 +158,7 @@ sendLoop:
 				}
 				rttSum += rtt
 				summary.AvgRTT = rttSum / time.Duration(summary.Sent)
-				fmt.Printf("%d bytes from %s: icmp_seq=%d rtt=%v\n",
+				fmt.Fprintf(w, "%d bytes from %s: icmp_seq=%d rtt=%v\n",
 					n, remoteAddr.(*net.UDPAddr).IP,
 					seq, rtt.Truncate(time.Microsecond))
 				continue sendLoop
@@ -157,9 +166,10 @@ sendLoop:
 		}
 	}
 	summary.DevRTT = time.Duration(int64(math.Sqrt(float64(s / (k - 1)))))
+
+	fmt.Fprintf(w, "--- %s ping statistics ---\n", addr)
+	fmt.Fprintln(w, summary.Stat())
 	return &summary, nil
 }
 
 const payloadSize = 56
-
-var emptyBuf [payloadSize]byte // used to wipe payload buffers
