@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"os"
 	"time"
@@ -26,7 +27,7 @@ type Summary struct {
 func (s Summary) Stat() string {
 	var pct float64
 	if s.Sent > 0 && s.Lost > 0 {
-		pct = float64(s.Lost) / float64(s.Sent)
+		pct = float64(s.Lost) / float64(s.Sent) * 100
 	}
 	return fmt.Sprintf("%d packets transmitted, %d packets received, %.1f%% packet loss\n"+
 		"round-trip min/avg/max/stddev = %v/%v/%v/%v", s.Sent, s.Sent-s.Lost, pct,
@@ -38,9 +39,6 @@ func (s Summary) Stat() string {
 }
 
 func ICMP(ctx context.Context, count int, addr string) (*Summary, error) {
-	if count <= 0 {
-		return nil, errors.New("count should be positive")
-	}
 	dst := net.ParseIP(addr)
 	if dst == nil {
 		ips, err := net.LookupIP(addr)
@@ -76,14 +74,25 @@ func ICMP(ctx context.Context, count int, addr string) (*Summary, error) {
 	defer ticker.Stop()
 	var summary Summary
 	var rttSum time.Duration
+	// Welford's method: https://stackoverflow.com/a/897463/229034
+	// https://www.johndcook.com/blog/standard_deviation/
+	var m, s, k int64 = 0, 0, 1
 sendLoop:
-	for seq := 0; seq < count; seq++ {
+	for seq := 0; ; seq++ {
+		if count > 0 && seq == count {
+			break
+		}
 		var start time.Time
 		switch seq {
 		case 0:
 			start = time.Now()
 		default:
-			start = <-ticker.C
+			select {
+			case start = <-ticker.C:
+			case <-ctx.Done():
+				break sendLoop
+
+			}
 		}
 		binary.LittleEndian.PutUint64(buf[3:], uint64(start.UnixNano()))
 		msg := icmp.Message{
@@ -125,13 +134,20 @@ sendLoop:
 				body.ID == msgID &&
 				body.Seq == seq &&
 				bytes.Equal(body.Data, buf) {
-				rttSum += rtt
+				{
+					val := int64(rtt)
+					_m := m
+					m += (val - _m) / k
+					s += (val - _m) * (val - m)
+					k++
+				}
 				if summary.MaxRTT == 0 || summary.MaxRTT < rtt {
 					summary.MaxRTT = rtt
 				}
 				if summary.MinRTT == 0 || summary.MinRTT > rtt {
 					summary.MinRTT = rtt
 				}
+				rttSum += rtt
 				summary.AvgRTT = rttSum / time.Duration(summary.Sent)
 				fmt.Printf("%d bytes from %s: icmp_seq=%d rtt=%v\n",
 					n, remoteAddr.(*net.UDPAddr).IP,
@@ -140,6 +156,7 @@ sendLoop:
 			}
 		}
 	}
+	summary.DevRTT = time.Duration(int64(math.Sqrt(float64(s / (k - 1)))))
 	return &summary, nil
 }
 
