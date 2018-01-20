@@ -150,6 +150,10 @@ func (p *icmpPinger) Stat() Summary {
 // NewICMP returns new Pinger which pings addr using IPv4 ICMP echo messages.
 // addr should either be an IPv4 or hostname that resolves to IPv4. If addr
 // resolves to multiple addresses, the first IPv4 record is used.
+//
+// Currently this only works on macOS or Linux; if on Linux you get permission
+// denied error, ensure that sysctl net.ipv4.ping_group_range includes your
+// group id.
 func NewICMP(addr string) (Pinger, error) {
 	dst := net.ParseIP(addr)
 	if dst == nil {
