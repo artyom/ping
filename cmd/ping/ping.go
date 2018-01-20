@@ -83,7 +83,7 @@ pingLoop:
 		}
 	}
 	summary := p.Stat()
-	fmt.Fprintf(w, "--- %s ping statistics ---\n", addr)
+	fmt.Fprintf(w, "\n--- %s ping statistics ---\n", addr)
 	fmt.Fprintln(w, prettyStat(summary))
 	return &summary, nil
 }
