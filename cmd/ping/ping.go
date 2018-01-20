@@ -54,6 +54,7 @@ func ICMP(ctx context.Context, w io.Writer, count int, addr string) (*ping.Summa
 	}
 	defer p.Close()
 	peerIP := p.PeerIP()
+	fmt.Fprintf(w, "PING %s (%s): 56 data bytes\n", addr, peerIP)
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 pingLoop:
@@ -76,7 +77,7 @@ pingLoop:
 		}
 		switch {
 		case ok:
-			fmt.Fprintf(w, "%d bytes from %s: icmp_seq=%d rtt=%v\n", n, peerIP,
+			fmt.Fprintf(w, "%d bytes from %s: icmp_seq=%d time=%v\n", n, peerIP,
 				i, rtt.Truncate(time.Microsecond))
 		default:
 			fmt.Fprintln(w, "Request timeout for icmp_seq", i)
