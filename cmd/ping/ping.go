@@ -71,14 +71,14 @@ pingLoop:
 			case <-ticker.C:
 			}
 		}
-		ok, rtt, n, err := p.Ping()
+		ok, info, err := p.Ping()
 		if err != nil {
 			return nil, err
 		}
 		switch {
 		case ok:
-			fmt.Fprintf(w, "%d bytes from %s: icmp_seq=%d time=%v\n", n, peerIP,
-				i, rtt.Truncate(time.Microsecond))
+			fmt.Fprintf(w, "%d bytes from %s: icmp_seq=%d ttl=%d time=%v\n", info.Size, peerIP,
+				i, info.TTL, info.RTT.Truncate(time.Microsecond))
 		default:
 			fmt.Fprintln(w, "Request timeout for icmp_seq", i)
 		}

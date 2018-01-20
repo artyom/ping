@@ -23,6 +23,13 @@ type Summary struct {
 	DevRTT     time.Duration
 }
 
+// RoundInfo holds result of a single ping request/reply exchange
+type RoundInfo struct {
+	RTT  time.Duration
+	TTL  int
+	Size int
+}
+
 // Pinger is used to ping remote endpoints.
 type Pinger interface {
 	// Ping sends single packet and waits for a limited time for reply.
@@ -31,7 +38,7 @@ type Pinger interface {
 	// only returns errors on non-recoverable errors, if it does not receive
 	// reply for implementation-specific time limit, it reports false with
 	// nil error which should be interpreted as timeout.
-	Ping() (ok bool, rtt time.Duration, bytesRead int, err error)
+	Ping() (ok bool, info RoundInfo, err error)
 
 	// PeerIP returns IP address Ping sends packets to
 	PeerIP() net.IP
@@ -67,7 +74,7 @@ func (p *icmpPinger) PeerIP() net.IP {
 	return nil
 }
 
-func (p *icmpPinger) Ping() (ok bool, rtt time.Duration, bytesRead int, err error) {
+func (p *icmpPinger) Ping() (ok bool, info RoundInfo, err error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	defer func() { p.seq++ }()
@@ -79,28 +86,32 @@ func (p *icmpPinger) Ping() (ok bool, rtt time.Duration, bytesRead int, err erro
 	}
 	b, err := msg.Marshal(nil)
 	if err != nil {
-		return false, 0, 0, err
+		return false, RoundInfo{}, err
 	}
 	sendTime := time.Now()
 	if err := p.conn.SetWriteDeadline(sendTime.Add(time.Second)); err != nil {
-		return false, 0, 0, err
+		return false, RoundInfo{}, err
 	}
 	if _, err := p.conn.WriteTo(b, p.udpAddr); err != nil {
-		return false, 0, 0, err
+		return false, RoundInfo{}, err
 	}
 	p.Summary.Sent++
 	if err := p.conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
-		return false, 0, 0, err
+		return false, RoundInfo{}, err
 	}
 
+	ipconn := p.conn.IPv4PacketConn()
 	for {
-		n, _, err := p.conn.ReadFrom(p.rcvBuf)
+		if err := ipconn.SetControlMessage(ipv4.FlagTTL, true); err != nil {
+			return false, RoundInfo{}, err
+		}
+		n, cm, _, err := ipconn.ReadFrom(p.rcvBuf)
 		if te, ok := err.(interface{ Timeout() bool }); ok && te.Timeout() {
 			p.Summary.Lost++
-			return false, 0, 0, nil
+			return false, RoundInfo{}, nil
 		}
 		if err != nil {
-			return false, 0, 0, err
+			return false, RoundInfo{}, err
 		}
 		rtt := time.Since(sendTime)
 		msg2, err := icmp.ParseMessage(1, p.rcvBuf[:n])
@@ -132,7 +143,7 @@ func (p *icmpPinger) Ping() (ok bool, rtt time.Duration, bytesRead int, err erro
 			}
 			p.rttSum += rtt
 			p.Summary.AvgRTT = p.rttSum / time.Duration(p.Summary.Sent)
-			return true, rtt, n, nil
+			return true, RoundInfo{RTT: rtt, TTL: cm.TTL, Size: n}, nil
 		}
 	}
 }
