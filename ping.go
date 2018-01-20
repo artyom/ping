@@ -71,6 +71,7 @@ func (p *icmpPinger) PeerIP() net.IP {
 func (p *icmpPinger) Ping() (ok bool, rtt time.Duration, bytesRead int, err error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	defer func() { p.seq++ }()
 	start := time.Now()
 	binary.LittleEndian.PutUint64(p.sndBuf[3:], uint64(start.UnixNano()))
 	msg := icmp.Message{
