@@ -3,7 +3,6 @@ package ping
 
 import (
 	"bytes"
-	"crypto/rand"
 	"encoding/binary"
 	"errors"
 	"math"
@@ -174,12 +173,10 @@ func NewICMP(addr string) (Pinger, error) {
 	}
 	sndBuf := make([]byte, 56)
 	_ = append(sndBuf[:0], "ping"...)
-	b := make([]byte, 2)
-	rand.Read(b)
 	return &icmpPinger{
 		udpAddr: &net.UDPAddr{IP: dst},
 		conn:    c,
-		msgID:   int(binary.LittleEndian.Uint16(b)),
+		msgID:   c.LocalAddr().(*net.UDPAddr).Port,
 		rcvBuf:  make([]byte, 1500),
 		sndBuf:  sndBuf,
 	}, nil
